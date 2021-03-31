@@ -1,11 +1,14 @@
+import os
+
+import kapre
+import tensorflow as tf
+from kapre.composed import get_melspectrogram_layer
 from tensorflow.keras import layers
-from tensorflow.keras.layers import TimeDistributed, LayerNormalization
+from tensorflow.keras.layers import LayerNormalization, TimeDistributed
 from tensorflow.keras.models import Model
 from tensorflow.keras.regularizers import l2
-import kapre
-from kapre.composed import get_melspectrogram_layer
-import tensorflow as tf
-import os
+
+from transformer_encoder import Encoder
 
 
 def Conv1D(N_CLASSES=10, SR=16000, DT=1.0):
@@ -86,7 +89,7 @@ def LSTM(N_CLASSES=10, SR=16000, DT=1.0):
                                      return_decibel=True,
                                      input_data_format='channels_last',
                                      output_data_format='channels_last',
-                                     name='2d_convolution')
+                                     name='lstm')
     x = LayerNormalization(axis=2, name='batch_norm')(i.output)
     x = TimeDistributed(layers.Reshape((-1,)), name='reshape')(x)
     s = TimeDistributed(layers.Dense(64, activation='tanh'),
@@ -104,6 +107,42 @@ def LSTM(N_CLASSES=10, SR=16000, DT=1.0):
                          name='dense_3_relu')(x)
     o = layers.Dense(N_CLASSES, activation='softmax', name='softmax')(x)
     model = Model(inputs=i.input, outputs=o, name='long_short_term_memory')
+    model.compile(optimizer='adam',
+                  loss='categorical_crossentropy',
+                  metrics=['accuracy'])
+
+    return model
+
+
+def Transformer(N_CLASSES=10, SR=16000, DT=1.0):
+
+    num_heads = 2  # Number of attention heads
+    ff_dim = 32  # Hidden layer size in feed forward network inside transformer
+    
+    # 128 originally
+    n_mels = 64
+    input_shape = (int(SR*DT), 1)
+    i = get_melspectrogram_layer(input_shape=input_shape,
+                                 n_mels=n_mels,
+                                 pad_end=True,
+                                 n_fft=512,
+                                 win_length=400,
+                                 hop_length=160,
+                                 sample_rate=SR,
+                                 return_decibel=True,
+                                 input_data_format='channels_last',
+                                 output_data_format='channels_last')
+    x = LayerNormalization(axis=2, name='batch_norm')(i.output)
+    x = tf.keras.layers.Reshape(x.shape[1:-1], input_shape=x.shape[1:])(x)
+
+    encoder = Encoder(num_layers=2, d_model=n_mels, num_heads=num_heads,
+                      dff=2048, maximum_position_encoding=41000)
+    t = encoder(x, training=False, mask=None)
+
+    t = layers.Flatten()(t)
+    outputs = layers.Dense(N_CLASSES, activation="softmax")(t)
+
+    model = tf.keras.Model(inputs=i.input, outputs=outputs)
     model.compile(optimizer='adam',
                   loss='categorical_crossentropy',
                   metrics=['accuracy'])

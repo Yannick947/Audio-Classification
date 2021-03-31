@@ -1,18 +1,20 @@
+import argparse
+import os
+import warnings
+from glob import glob
+
+import numpy as np
+import pandas as pd
 import tensorflow as tf
+from scipy.io import wavfile
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import LabelEncoder
+from sklearn.utils.class_weight import compute_class_weight
 from tensorflow.keras.callbacks import CSVLogger, ModelCheckpoint
 from tensorflow.keras.utils import to_categorical
-import os
-from scipy.io import wavfile
-import pandas as pd
-import numpy as np
-from sklearn.utils.class_weight import compute_class_weight
-from sklearn.preprocessing import LabelEncoder
-from sklearn.model_selection import train_test_split
-from models import Conv1D, Conv2D, LSTM
 from tqdm import tqdm
-from glob import glob
-import argparse
-import warnings
+
+from models import LSTM, Conv1D, Conv2D, Transformer
 
 
 class DataGenerator(tf.keras.utils.Sequence):
@@ -27,10 +29,8 @@ class DataGenerator(tf.keras.utils.Sequence):
         self.shuffle = True
         self.on_epoch_end()
 
-
     def __len__(self):
         return int(np.floor(len(self.wav_paths) / self.batch_size))
-
 
     def __getitem__(self, index):
         indexes = self.indexes[index*self.batch_size:(index+1)*self.batch_size]
@@ -67,7 +67,9 @@ def train(args):
               'DT':dt}
     models = {'conv1d':Conv1D(**params),
               'conv2d':Conv2D(**params),
-              'lstm':  LSTM(**params)}
+              'lstm':  LSTM(**params),
+              'transformer': Transformer(**params)}
+
     assert model_type in models.keys(), '{} not an available model'.format(model_type)
     csv_path = os.path.join('logs', '{}_history.csv'.format(model_type))
 
@@ -94,22 +96,23 @@ def train(args):
     vg = DataGenerator(wav_val, label_val, sr, dt,
                        params['N_CLASSES'], batch_size=batch_size)
     model = models[model_type]
+    model.summary()
     cp = ModelCheckpoint('models/{}.h5'.format(model_type), monitor='val_loss',
                          save_best_only=True, save_weights_only=False,
                          mode='auto', save_freq='epoch', verbose=1)
     csv_logger = CSVLogger(csv_path, append=False)
     model.fit(tg, validation_data=vg,
-              epochs=30, verbose=1,
-              callbacks=[csv_logger, cp])
+              epochs=40, verbose=1,
+              callbacks=[csv_logger])
 
 if __name__ == '__main__':
 
     parser = argparse.ArgumentParser(description='Audio Classification Training')
-    parser.add_argument('--model_type', type=str, default='lstm',
-                        help='model to run. i.e. conv1d, conv2d, lstm')
+    parser.add_argument('--model_type', type=str, default='transformer',
+                        help='model to run. i.e. conv1d, conv2d, lstm, transformer')
     parser.add_argument('--src_root', type=str, default='clean',
                         help='directory of audio files in total duration')
-    parser.add_argument('--batch_size', type=int, default=16,
+    parser.add_argument('--batch_size', type=int, default=1,
                         help='batch size')
     parser.add_argument('--delta_time', '-dt', type=float, default=1.0,
                         help='time in seconds to sample audio')
