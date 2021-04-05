@@ -2,6 +2,7 @@ import os
 
 import kapre
 import tensorflow as tf
+from tensorflow import keras
 from kapre.composed import get_melspectrogram_layer
 from tensorflow.keras import layers
 from tensorflow.keras.layers import LayerNormalization, TimeDistributed
@@ -9,7 +10,7 @@ from tensorflow.keras.models import Model
 from tensorflow.keras.regularizers import l2
 
 from transformer_encoder import Encoder
-
+from visual_transformer import mlp, PatchEncoder, Patches
 
 def Conv1D(N_CLASSES=10, SR=16000, DT=1.0):
     input_shape = (int(SR*DT), 1)
@@ -136,7 +137,7 @@ def Transformer(N_CLASSES=10, SR=16000, DT=1.0):
     x = tf.keras.layers.Reshape(x.shape[1:-1], input_shape=x.shape[1:])(x)
 
     encoder = Encoder(num_layers=2, d_model=n_mels, num_heads=num_heads,
-                      dff=2048, maximum_position_encoding=41000)
+                      dff=ff_dim, maximum_position_encoding=41000)
     t = encoder(x, training=False, mask=None)
 
     t = layers.Flatten()(t)
@@ -149,3 +150,79 @@ def Transformer(N_CLASSES=10, SR=16000, DT=1.0):
 
     return model
 
+
+def ViT(N_CLASSES=10, SR=16000, DT=1.0):
+
+    image_size = 128  # We'll resize input images to this size
+    patch_size = 8  # Size of the patches to be extract from the input images
+    num_patches = (image_size // patch_size) ** 2
+    projection_dim = 32
+    num_heads = 2
+    transformer_units = [
+        projection_dim * 2,
+        projection_dim,
+    ]  # Size of the transformer layers
+    transformer_layers = 3
+    mlp_head_units = [10]
+
+    input_shape = (int(SR*DT), 1)
+
+    i = get_melspectrogram_layer(input_shape=input_shape,
+                                 n_mels=128,
+                                 pad_end=True,
+                                 n_fft=512,
+                                 win_length=400,
+                                 hop_length=160,
+                                 sample_rate=SR,
+                                 return_decibel=True,
+                                 input_data_format='channels_last',
+                                 output_data_format='channels_last')
+    x = LayerNormalization(axis=2, name='batch_norm')(i.output)  
+
+    # Augment data.
+    # augmented = data_augmentation(inputs)
+
+    resize = layers.experimental.preprocessing.Resizing(image_size, image_size)(x)
+
+    # Create patches.
+    patches = Patches(patch_size)(resize)
+
+    # Encode patches.
+    encoded_patches = PatchEncoder(num_patches, projection_dim)(patches)
+
+    # Create multiple layers of the Transformer block.
+    for _ in range(transformer_layers):
+        # Layer normalization 1.
+        x1 = layers.LayerNormalization(epsilon=1e-6)(encoded_patches)
+        # Create a multi-head attention layer.
+        attention_output = layers.MultiHeadAttention(
+            num_heads=num_heads, key_dim=projection_dim, dropout=0.1
+        )(x1, x1)
+        # Skip connection 1.
+        x2 = layers.Add()([attention_output, encoded_patches])
+        # Layer normalization 2.
+        x3 = layers.LayerNormalization(epsilon=1e-6)(x2)
+        # MLP.
+        x3 = mlp(x3, hidden_units=transformer_units, dropout_rate=0.1)
+        # Skip connection 2.
+        encoded_patches = layers.Add()([x3, x2])
+
+    # Create a [batch_size, projection_dim] tensor.
+    representation = layers.LayerNormalization(epsilon=1e-6)(encoded_patches)
+    #Add Pooling for dimensionality reduction
+    representation = tf.keras.layers.Reshape(target_shape=tf.expand_dims(representation, axis=-1).shape[1:])(representation)
+    pooling = layers.MaxPool2D()(representation)
+
+    representation = layers.Flatten()(pooling)
+
+    # Add MLP.
+    features = mlp(representation, hidden_units=mlp_head_units, dropout_rate=0.1)
+
+    # Classify outputs.
+    logits = layers.Dense(N_CLASSES)(features)
+    # Create the Keras model.
+    model = keras.Model(inputs=i.input, outputs=logits)
+    model.compile(optimizer='adam',
+                  loss='categorical_crossentropy',
+                  metrics=['accuracy'])
+    return model

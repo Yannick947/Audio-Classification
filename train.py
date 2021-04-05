@@ -14,7 +14,7 @@ from tensorflow.keras.callbacks import CSVLogger, ModelCheckpoint
 from tensorflow.keras.utils import to_categorical
 from tqdm import tqdm
 
-from models import LSTM, Conv1D, Conv2D, Transformer
+from models import LSTM, Conv1D, Conv2D, Transformer, ViT
 
 
 class DataGenerator(tf.keras.utils.Sequence):
@@ -43,7 +43,7 @@ class DataGenerator(tf.keras.utils.Sequence):
         Y = np.empty((self.batch_size, self.n_classes), dtype=np.float32)
 
         for i, (path, label) in enumerate(zip(wav_paths, labels)):
-            rate, wav = wavfile.read(path)
+            _, wav = wavfile.read(path)
             X[i,] = wav.reshape(-1, 1)
             Y[i,] = to_categorical(label, num_classes=self.n_classes)
 
@@ -68,7 +68,8 @@ def train(args):
     models = {'conv1d':Conv1D(**params),
               'conv2d':Conv2D(**params),
               'lstm':  LSTM(**params),
-              'transformer': Transformer(**params)}
+              'transformer': Transformer(**params),
+              'ViT': ViT(**params)}
 
     assert model_type in models.keys(), '{} not an available model'.format(model_type)
     csv_path = os.path.join('logs', '{}_history.csv'.format(model_type))
@@ -108,11 +109,11 @@ def train(args):
 if __name__ == '__main__':
 
     parser = argparse.ArgumentParser(description='Audio Classification Training')
-    parser.add_argument('--model_type', type=str, default='transformer',
-                        help='model to run. i.e. conv1d, conv2d, lstm, transformer')
+    parser.add_argument('--model_type', type=str, default='ViT',
+                        help='model to run. i.e. conv1d, conv2d, lstm, transformer, ViT')
     parser.add_argument('--src_root', type=str, default='clean',
                         help='directory of audio files in total duration')
-    parser.add_argument('--batch_size', type=int, default=1,
+    parser.add_argument('--batch_size', type=int, default=32,
                         help='batch size')
     parser.add_argument('--delta_time', '-dt', type=float, default=1.0,
                         help='time in seconds to sample audio')
